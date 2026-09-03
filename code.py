@@ -1546,7 +1546,6 @@ if __name__ == "__main__":
 
 
 
-
 # ============================================================
 # NEURAL NETWORK
 # PHYSICS-INFORMED LSTM
@@ -4894,6 +4893,166 @@ def predict_future(
     return np.asarray(
         predictions
     )
+
+
+def evaluate_prediction_errors():
+    """Report held-out Cartesian endpoint errors for fixed rollout horizons."""
+
+    horizons = (1, 5, 10, 25, 50, 100)
+    maximum_horizon = max(horizons)
+    available_samples = sum(
+        trajectories[index].shape[0] - SEQUENCE_LENGTH - maximum_horizon + 1
+        for index in test_indices
+    )
+    evaluation_samples = min(
+        10_000,
+        available_samples
+    )
+
+    if evaluation_samples <= 0:
+        raise ValueError(
+            "The test trajectories are too short for a 100-step evaluation."
+        )
+
+    evaluation_rng = np.random.default_rng(SEED + 2)
+    selected_trajectories = evaluation_rng.choice(
+        test_indices,
+        size=evaluation_samples,
+        replace=True
+    )
+    selected_starts = evaluation_rng.integers(
+        0,
+        trajectories.shape[1] - SEQUENCE_LENGTH - maximum_horizon + 1,
+        size=evaluation_samples
+    )
+
+    errors_by_horizon = {
+        horizon: []
+        for horizon in horizons
+    }
+
+    model.eval()
+
+    with torch.no_grad():
+        for batch_start in range(0, evaluation_samples, BATCH_SIZE):
+            batch_end = min(
+                batch_start + BATCH_SIZE,
+                evaluation_samples
+            )
+            batch_trajectories = selected_trajectories[batch_start:batch_end]
+            batch_starts = selected_starts[batch_start:batch_end]
+
+            sequences = np.asarray(
+                [
+                    trajectories[trajectory_index, start:start + SEQUENCE_LENGTH]
+                    for trajectory_index, start in zip(
+                        batch_trajectories,
+                        batch_starts
+                    )
+                ],
+                dtype=np.float64
+            )
+
+            for horizon in range(1, maximum_horizon + 1):
+                sequence_features = state_to_features(
+                    sequences
+                )
+                sequence_features = (
+                    sequence_features - feature_mean
+                ) / feature_std
+
+                current_features = sequence_features[:, -1, :]
+
+                predicted_normalized_delta = model(
+                    torch.as_tensor(
+                        sequence_features,
+                        dtype=torch.float32,
+                        device=DEVICE
+                    ),
+                    torch.as_tensor(
+                        current_features,
+                        dtype=torch.float32,
+                        device=DEVICE
+                    )
+                ).cpu().numpy()
+
+                predicted_delta = (
+                    predicted_normalized_delta * delta_std
+                    + delta_mean
+                )
+
+                predicted_states = apply_delta(
+                    sequences[:, -1, :].copy(),
+                    predicted_delta
+                )
+
+                target_states = np.asarray(
+                    [
+                        trajectories[
+                            trajectory_index,
+                            start + SEQUENCE_LENGTH + horizon - 1
+                        ]
+                        for trajectory_index, start in zip(
+                            batch_trajectories,
+                            batch_starts
+                        )
+                    ],
+                    dtype=np.float64
+                )
+
+                predicted_xy = state_to_xy(
+                    predicted_states
+                )
+                target_xy = state_to_xy(
+                    target_states
+                )
+
+                errors = np.linalg.norm(
+                    predicted_xy - target_xy,
+                    axis=1
+                )
+
+                if horizon in errors_by_horizon:
+                    errors_by_horizon[horizon].extend(
+                        errors.tolist()
+                    )
+
+                sequences = np.concatenate(
+                    [
+                        sequences[:, 1:, :],
+                        predicted_states[:, None, :]
+                    ],
+                    axis=1
+                )
+
+    print()
+    print("HELD-OUT X/Y PREDICTION ERROR")
+    print("-----------------------------")
+    print(
+        f"Test samples: {evaluation_samples:,} | "
+        "error is Euclidean endpoint distance in meters"
+    )
+    print(
+        "Horizon | Mean (m) | Median (m) | Maximum (m) | "
+        "95th percentile (m) | 99th percentile (m)"
+    )
+
+    for horizon in horizons:
+        errors = np.asarray(
+            errors_by_horizon[horizon],
+            dtype=np.float64
+        )
+        print(
+            f"{horizon:7d} | "
+            f"{np.mean(errors):9.6e} | "
+            f"{np.median(errors):11.6e} | "
+            f"{np.max(errors):12.6e} | "
+            f"{np.percentile(errors, 95):19.6e} | "
+            f"{np.percentile(errors, 99):19.6e}"
+        )
+
+
+evaluate_prediction_errors()
 
 
 print(
