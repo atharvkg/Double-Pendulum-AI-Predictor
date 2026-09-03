@@ -1536,6 +1536,17 @@ if __name__ == "__main__":
 
 
 
+
+
+
+
+
+
+
+
+
+
+
 # ============================================================
 # NEURAL NETWORK
 # PHYSICS-INFORMED LSTM
@@ -7487,4 +7498,3 @@ print(
 
 print("=" * 75)
 print(f"total time spent{time.time()- initial_time_entire_code} seconds")
-
