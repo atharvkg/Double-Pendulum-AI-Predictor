@@ -4896,7 +4896,7 @@ def predict_future(
 
 
 def evaluate_prediction_errors():
-    """Report held-out Cartesian endpoint errors for fixed rollout horizons."""
+    """Report held-out state, Cartesian, and energy errors by rollout horizon."""
 
     horizons = (1, 5, 10, 25, 50, 100)
     maximum_horizon = max(horizons)
@@ -4928,6 +4928,17 @@ def evaluate_prediction_errors():
 
     errors_by_horizon = {
         horizon: []
+        for horizon in horizons
+    }
+
+    detailed_errors_by_horizon = {
+        horizon: {
+            "theta1": [],
+            "theta2": [],
+            "x2": [],
+            "y2": [],
+            "energy": []
+        }
         for horizon in horizons
     }
 
@@ -5017,6 +5028,57 @@ def evaluate_prediction_errors():
                         errors.tolist()
                     )
 
+                    predicted_energy = compute_energy_batch(
+                        predicted_states,
+                        m1,
+                        m2,
+                        L1,
+                        L2,
+                        g
+                    )
+                    initial_energy = compute_energy_batch(
+                        sequences[:, -1, :],
+                        m1,
+                        m2,
+                        L1,
+                        L2,
+                        g
+                    )
+                    detailed_errors = (
+                        detailed_errors_by_horizon[horizon]
+                    )
+                    detailed_errors["theta1"].extend(
+                        np.abs(
+                            wrapped_angle_difference(
+                                predicted_states[:, 0],
+                                target_states[:, 0]
+                            )
+                        ).tolist()
+                    )
+                    detailed_errors["theta2"].extend(
+                        np.abs(
+                            wrapped_angle_difference(
+                                predicted_states[:, 1],
+                                target_states[:, 1]
+                            )
+                        ).tolist()
+                    )
+                    detailed_errors["x2"].extend(
+                        np.abs(
+                            predicted_xy[:, 0] - target_xy[:, 0]
+                        ).tolist()
+                    )
+                    detailed_errors["y2"].extend(
+                        np.abs(
+                            predicted_xy[:, 1] - target_xy[:, 1]
+                        ).tolist()
+                    )
+                    detailed_errors["energy"].extend(
+                        np.abs(
+                            predicted_energy - initial_energy
+                        ).tolist()
+                    )
+
                 sequences = np.concatenate(
                     [
                         sequences[:, 1:, :],
@@ -5049,6 +5111,25 @@ def evaluate_prediction_errors():
             f"{np.max(errors):12.6e} | "
             f"{np.percentile(errors, 95):19.6e} | "
             f"{np.percentile(errors, 99):19.6e}"
+        )
+
+    print()
+    print("MEAN ABSOLUTE COMPONENT ERRORS AND ENERGY DRIFT")
+    print("------------------------------------------------")
+    print(
+        "Horizon | theta1 (rad) | theta2 (rad) | "
+        "x2 (m) | y2 (m) | energy drift (J)"
+    )
+
+    for horizon in horizons:
+        detailed_errors = detailed_errors_by_horizon[horizon]
+        print(
+            f"{horizon:7d} | "
+            f"{np.mean(detailed_errors['theta1']):12.6e} | "
+            f"{np.mean(detailed_errors['theta2']):12.6e} | "
+            f"{np.mean(detailed_errors['x2']):8.6e} | "
+            f"{np.mean(detailed_errors['y2']):8.6e} | "
+            f"{np.mean(detailed_errors['energy']):16.6e}"
         )
 
 
